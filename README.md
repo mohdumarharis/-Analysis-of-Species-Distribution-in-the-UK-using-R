@@ -1,6 +1,7 @@
 # Dallas-Police-Data-Analysis-Visualization
 - Explored Dallas Police data using R, performed data cleaning and visualization. - Provided insights into incident patterns and officer demographics.
-
+![Alt text]([image link](https://github.com/mohdumarharis/Dallas-Police-Data-Analysis-Visualization/blob/main/Unknown-3.jpg?raw=true
+))
 This project explores and analyzes Dallas Police data using R. It involves data cleaning, visualization of incidents over time, officer demographics, force usage, injuries, and correlations. The analysis provides insights into patterns and trends in the dataset through graphs and tables, showcasing expertise in data analysis and visualization.
 
 ## Conclusion

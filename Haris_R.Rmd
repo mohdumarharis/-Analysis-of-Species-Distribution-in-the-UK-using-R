@@ -1,0 +1,384 @@
+---
+title: "Data Visualization on Texas Police Data"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The given data is a dataset of police and subject interaction and actions taken on that moment. The data is pre-processed to make it suitable for analysis.
+lets load the data and check some entries from it.
+
+```{r eval=TRUE ,results='hide',error=FALSE,message=FALSE,warning=FALSE}
+# loading necessary packages
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(plotly)
+library(lubridate)
+library(leaflet)
+library(visdat)
+library(corrplot)
+# loading the given csv file
+
+police_data <- read.csv("37-00049_UOF-P_2016_prepped.csv")
+
+```
+
+### removing the first row and changing the date to proper format
+Also adding columns of months and days and number of types of force used.
+Changing 'null' & 'Unknown' values to 'other'.
+Adding a new column "ID" to give unique id to each incidents.
+```{r eval=TRUE , results='hide'}
+library(dplyr)
+
+# as we can see that there are double headings present in the data set ,
+# removing the first row to clean the data
+police_data = police_data[-1,] 
+str(police_data)
+#police_data = police_data[complete.cases(policing_data),]
+
+police_data <- data.frame(lapply(police_data, function(x) ifelse(is.na(x), "other", x)))
+
+police_data <- data.frame(lapply(police_data, function(x) gsub("NULL", "other", x)))
+police_data <- data.frame(lapply(police_data, function(x) gsub("Other", "other", x)))
+police_data <- data.frame(lapply(police_data, function(x) gsub("Unknown", "other", x)))
+
+police_data <- police_data %>% mutate(ID = row_number())
+# select the columns in the desired order
+police_data <- police_data[, c(ncol(police_data), 1:(ncol(police_data)-1))]
+
+police_data <- police_data %>% mutate(INCIDENT_DATE = mdy(INCIDENT_DATE))
+
+police_data <- police_data %>% mutate(OFFICER_HIRE_DATE = mdy(OFFICER_HIRE_DATE))
+
+police_data$force_type_count <- sapply(strsplit(police_data$UOF_NUMBER, ", "), function(x) length(unique(x)))
+police_data$month <- month(as.Date(police_data$INCIDENT_DATE))
+police_data$day <- day(as.Date(police_data$INCIDENT_DATE))
+head(police_data)
+
+
+```
+## Plotting the graph of Number of incidents by Officer's Race
+Using ggplot 2
+```{r eval=TRUE }
+
+officer_race <- aggregate(ID ~ OFFICER_RACE, data =police_data, FUN = length)
+
+# Set color scheme for the plot
+colors <- c("#004c6d", "#ffa600", "#000000", "#58508d", "#bc5090", "#ff5a5f")
+
+plot1=ggplot(officer_race, aes(x = reorder(OFFICER_RACE, ID), y = ID, fill = OFFICER_RACE)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  labs(title = "Number of Incidents by Officer Race",
+       x = "Officer Race",
+       y = "Number of Incidents") +
+  theme_minimal()
+ggplotly(plot1)
+
+```
+
+Frequency of Races among the police officers can be seen here.
+Most of the officers are white followed by Hispanic and then Black and other ethnicities.
+
+### Incidents by officer race and years on force
+```{r eval=TRUE }
+# Convert the table to a data frame
+police_data$OFFICER_YEARS_ON_FORCE<-as.numeric(police_data$OFFICER_YEARS_ON_FORCE)
+force_age <- as.data.frame(table(police_data$OFFICER_RACE,cut(police_data$OFFICER_YEARS_ON_FORCE, breaks = seq(0, 40, 5))))
+
+# Rename the columns
+colnames(force_age) <- c("OFFICER_RACE", "YEARS_ON_FORCE", "COUNT")
+
+# Create a bar chart of the number of incidents by officer race and years on force
+plot2=ggplot(force_age, aes(x = YEARS_ON_FORCE, y = COUNT, fill = OFFICER_RACE)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Number of incidents by officer race and years on force")
+ggplotly(plot2)
+```
+This graph shows the number of incidents handled by the police officers and their experience in the bracket of 0-5, 5-10, 10-15, 15-20 and so on.
+The graph shows majority of the Officers have less than 5 years of experience, which are handling most of the cases.
+
+### Table of Incidents by Officer Race and Gender
+```{r eval=TRUE }
+library(knitr)
+
+# Table of incidents by officer race
+table_race <- table(police_data$OFFICER_RACE)
+kable(table_race, caption = "Number of incidents by officer race",col.names = c("Officer Race", "Number of Incidents"))
+# Create a pie chart
+pie(table_race, main = "incidents by officer race", labels = paste(names(table_race), ": ", table_race, sep = ""))
+
+# Table of incidents by officer gender
+table_gender <- table(police_data$OFFICER_GENDER)
+kable(table_gender, caption = "Number of incidents by officer gender",col.names = c("Officer Gender", "Number of Incidents"))
+
+```
+## Table of incidents by Subject Race and Gender
+```{r eval=TRUE }
+# Table of incidents by subject race
+
+table_subject_race <- table(police_data$SUBJECT_RACE)
+kable(table_subject_race, caption = "Number of incidents by subject race",col.names = c("subject Race", "Number of Incidents"))
+# Create a pie chart
+pie(table_subject_race, main = "Incidents by subject race", labels = paste(names(table_subject_race), ": ", table_subject_race, sep = ""))
+
+
+# Table of incidents by subject gender
+table_subject_gender <- table(police_data$SUBJECT_GENDER)
+kable(table_subject_gender, caption = "Number of incidents by subject gender",col.names = c("subject gender", "Number of Incidents"))
+
+```
+
+### Table of officers with Multiple Incidents (Showing Entries for Top 30 )
+```{r eval=TRUE }
+# Create a data frame with officer ID and race
+officer_race <- police_data %>%
+  distinct(OFFICER_ID, OFFICER_RACE)
+
+# Table of officers with multiple incidents
+table_multiple <- table(police_data$OFFICER_ID[duplicated(police_data$OFFICER_ID)])
+table_multiple_sorted <- table_multiple[order(-table_multiple)]
+# Convert the table to a data frame and add officer race
+table_multiple_df <- data.frame(OFFICER_ID = names(table_multiple_sorted),
+                                Count = as.vector(table_multiple_sorted))
+table_multiple_df_with_race <- left_join(table_multiple_df, officer_race,
+                                         by = "OFFICER_ID")
+# Select the top 30 values
+table_top_30_officers <- table_multiple_df_with_race %>%
+  arrange(desc(Count)) %>%
+  slice(1:30)
+# Print the table
+kable(table_top_30_officers, caption = "Officers with multiple incidents and their races")
+
+
+
+```
+### Plotting Box Plot for the Complete Above Data
+As we can se the Outliers in this graph with officers involved in multiple incidents
+
+```{r eval=TRUE }
+boxplot(table_multiple_df_with_race$Count, main = "Box Plot of Number of Incidents Handled by Officers", ylab = "Incidents")
+```
+
+### Offenders with Multiple Incidents (Top 30 entries)
+```{r eval=TRUE }
+subject_race <- police_data %>%
+  distinct(SUBJECT_ID, SUBJECT_RACE)
+table_multiple <- table(police_data$SUBJECT_ID[duplicated(police_data$SUBJECT_ID)])
+table_multiple_sorted <- table_multiple[order(-table_multiple)]
+table_multiple_sorted <-table_multiple_sorted[-which(names(table_multiple_sorted) == "0")]
+
+# Convert the table to a data frame and add subject race
+table_multiple_df_s <- data.frame(SUBJECT_ID = names(table_multiple_sorted),
+                                Count = as.vector(table_multiple_sorted))
+table_multiple_df_with_race_s <- left_join(table_multiple_df_s, subject_race,
+                                         by = "SUBJECT_ID")
+
+# Select the top 30 values
+table_top_30_subjects_s <- table_multiple_df_with_race_s %>%
+  arrange(desc(Count)) %>%
+  slice(1:30)
+
+# Print the table
+kable(table_top_30_subjects_s, caption = "Subjects with multiple incidents and their races")
+
+
+```
+### Plotting Box plot for The complete Data Shown Above
+As we can se the Outliers in this graph with Subjects involved in multiple Incidents
+
+```{r eval=TRUE }
+boxplot(table_multiple_df_with_race_s$Count, main = "Box Plot of Number of Incidents Subject is involved", ylab = "Incidents")
+```
+## Plotting Some Time series To Analyse the Timeline in which Incidents Occured
+```{r eval=TRUE }
+# Create a line chart of the number of incidents by month
+ggplot(police_data, aes(x = month, y = ID)) +
+  geom_smooth()+
+  scale_x_continuous(breaks = seq(1, 12, by = 1))+
+  labs(x="Month",y="Incidents",title = "Incidents happened in each month from 1-12")
+
+# Create a line chart of the number of incidents by day
+ggplot(police_data, aes(x = day, y = ID)) +
+  geom_smooth()+
+  scale_x_continuous(breaks = seq(1, 30, by = 1))+
+  labs(x="Day of a Month",y="Incidents",title = "Incidents happened in each day from 1-30")
+```
+
+### Density Plot of the Distribution of Incidents per Reporting Area
+```{r eval=TRUE }
+# Create a data frame with the number of incidents per reporting area
+incidents_by_area <- police_data %>%
+  group_by(REPORTING_AREA) %>%
+  summarise(Incidents = n())
+# Plot a density plot of the distribution of incidents per reporting area
+ggplot(incidents_by_area, aes(x = Incidents)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  labs(x = "Number of Incidents", y = "Density", title = "Distribution of Incidents per Reporting Area")
+
+```
+#### This graph shows that some Reporting Areas have very high Incidents count compared to other. This may imply that certain areas are more prone to crime or officers are biased in certain areas
+
+### Density Plot of Distribution of Percentage of Incidents in which Subject was Injured
+```{r eval=TRUE ,error=FALSE,message=FALSE,warning=FALSE}
+# Group by subject race and gender, calculate percentage of incidents in which subject was injured
+subject_injured <- police_data %>%
+  filter(SUBJECT_RACE != "other") %>%
+  group_by(SUBJECT_RACE, SUBJECT_GENDER) %>%
+  summarise(percent_injured = mean(SUBJECT_INJURY == "Yes") * 100, .groups = "drop")
+
+# Plot density plot of distribution of percentage of incidents in which subject was injured
+ggplot(subject_injured, aes(x = percent_injured)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  labs(x = "Percentage of Incidents in which Subject was Injured", y = "Density",
+       title = "Distribution of the Percentage of by Race and Gender") +
+  facet_wrap(~ SUBJECT_RACE, nrow = 2)
+```
+#### Graphs for American Indian and Asian are Empty as there are not much values here to display
+
+## Data Distribution Graph showing Officer Experience In different races
+```{r eval=TRUE }
+# Create the box plot
+ggplot(police_data, aes(x = OFFICER_RACE, y = OFFICER_YEARS_ON_FORCE)) +
+  geom_boxplot(fill = "#69b3a2", color = "#264653", alpha = 0.8) +
+  ggtitle("Experience of Officer Race") +
+  xlab("Officer Race") +
+  ylab("Experience of Officer in years") +
+  theme_minimal() +
+  theme(plot.title = element_text(color = "#264653", size = 18, face = "bold"),
+        axis.title.x = element_text(color = "#2a9d8f", size = 14, face = "bold"),
+        axis.title.y = element_text(color = "#2a9d8f", size = 14, face = "bold"),
+        axis.text.x = element_text(color = "#2a9d8f", size = 12),
+        axis.text.y = element_text(color = "#2a9d8f", size = 12))
+```
+## Scatter Plot Showing Location Districts and Number of Incidents happened in them
+The graph shows highest Number of incidents in d14 and D2 and lowest in D1
+```{r eval=TRUE }
+
+df_monthly <- aggregate(ID ~ month, data = police_data, FUN = length)
+
+df_LOCATION_DISTRICT <- aggregate(ID ~ LOCATION_DISTRICT, data = police_data, FUN = length)
+scterplot_district<-ggplot(df_LOCATION_DISTRICT, aes(x = LOCATION_DISTRICT, y = ID)) +
+  geom_point() +
+  labs(x = "LOCATION_DISTRICT", y = "Number of Incidents", title = "LOCATION_DISTRICT Incidents") +
+  theme_minimal()
+ggplotly(scterplot_district)
+```
+## Finding Correlation in the Data 
+From the plot, It can be observed that there is a negative correlation between experience of Officer and Forces Used on subject which implies that more experienced officers use less force to tackle the situations.
+```{r eval=TRUE }
+# separating Numerical colums from the data
+numeric_cols <- sapply(police_data, is.numeric)
+# creating a dataframe for the numerical columns
+police_numeric <- police_data[, numeric_cols]
+# applying correlation function
+correlation_police <- cor(police_numeric)
+#print(correlation_police)
+
+police_corplot <-corrplot(correlation_police, type = "lower", method = "circle")
+
+```
+### Maps to represent the location in which the incidents happened
+
+```{r eval=TRUE }
+library(leaflet)
+
+
+# Create a leaflet map
+police_data$LOCATION_LATITUDE <- as.numeric(police_data$LOCATION_LATITUDE)
+police_data$LOCATION_LONGITUDE <- as.numeric(police_data$LOCATION_LONGITUDE)
+mean(na.omit(police_data$LOCATION_LATITUDE))
+m <- leaflet(police_data) %>%
+  addTiles() %>%
+  setView(lat = mean(na.omit(police_data$LOCATION_LATITUDE)), lng = mean(na.omit(police_data$LOCATION_LONGITUDE)), zoom = 12)  # set the initial map view
+
+
+any(!is.numeric(police_data$LOCATION_LONGITUDE))
+any(!is.numeric(police_data$LOCATION_LATITUDE))
+# Add markers to the map for each incident
+m <- m %>% addMarkers(
+  ~police_data$LOCATION_LONGITUDE, ~police_data$LOCATION_LATITUDE,  # specify the longitude and latitude columns
+  popup = paste("<b>Incident Reason:</b>", police_data$INCIDENT_REASON, "<br>",
+                "<b>Officer Gender:</b>", police_data$OFFICER_GENDER, "<br>",
+                "<b>Subject Race:</b>", police_data$SUBJECT_RACE)  # specify the popup text
+)
+
+# Add a legend to the map for the INCIDENT_REASON variable
+m <- m %>% addLegend(
+  position = "topright",
+  title = "Incident Reason",
+  colors = rainbow(14),
+  labels = unique(police_data$INCIDENT_REASON)
+)
+length(unique(police_data$INCIDENT_REASON))
+# Add a layer control to the map to toggle the markers and legend
+m <- m %>% addLayersControl(
+  baseGroups = c("Default", "Grayscale", "Streets", "Outdoors", "Satellite"),
+  overlayGroups = c("Markers", "Legend"),
+  options = layersControlOptions(collapsed = FALSE)
+)
+
+# Display the map
+m
+```
+## Interactive plot 
+```{r eval=TRUE ,shiny}
+library(shiny)
+
+library(ggplot2)
+
+# Read in the police_data dataset
+
+# Define the UI
+ui <- fluidPage(
+  titlePanel("Police Data Visualization"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("race", "Select a race:", choices = unique(police_data$SUBJECT_RACE))
+    ),
+    mainPanel(
+      plotOutput("plot")
+    )
+  )
+)
+
+# Define the server
+server <- function(input, output) {
+  output$plot <- renderPlot({
+    # Subset the data based on the selected race
+    subset_data <- subset(police_data, SUBJECT_RACE == input$race)
+    # creating a boxplot 
+    boxplot(subset_data$force_type_count, main = "distribution of Number of forces applied", ylab = "forces Count")
+    
+  })
+}
+
+# Run the app
+shinyApp(ui, server)
+```
+# Conclusion
+We can observe data by analysing various graphical charts present above 
+* The police force in Dallas includes mostly white officers followed by Hispanics and then black people. 
+* Majority of police have officers of all ethnicity have less than five years of experience and which shows there is a very high imbalance in the races of subjects and the races of officers. 
+* Next point most of the officers handles less than five incidents and having more than 10 incidents can be considered as outliers.
+* Time series graph shows significant be less cases in the month seven and eight than in the month first and second.
+* Some areas or more prone to crimes than other as indicated by density plots
+* Overall mean experience of black officers or marginally higher than other ethnicities 
+* Map is plotted to highlight the exact pin point where the incident happened.
+* An interactive graph is plotted to show the distribution of number of types of forces used by the officers of different ethnicities and experiences.
+
+# Bibliography
+* [kaggle.com/center-for-policing-equity/data-science-for-good](https://www.kaggle.com/center-for-policing-equity/data-science-for-good)
+* [rmarkdown.rstudio.com](https://rmarkdown.rstudio.com/lesson-6.html)
+
+
